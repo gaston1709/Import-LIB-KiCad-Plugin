@@ -83,6 +83,9 @@ class REMOTE_TYPES(Enum):
 
 
 class LibImporter:
+    MAX_FIELD_NAME_LENGTH = 40
+    MIN_STRUCTURED_FIELDS = 2
+
     def print(self, txt: str) -> None:
         print("->" + txt)
 
@@ -147,7 +150,10 @@ class LibImporter:
             line = raw_line.strip().lstrip("-* ").strip()
             if not line:
                 continue
-            match = re.match(r"^([A-Za-z][A-Za-z0-9 _/().-]{1,40})\s*[:=]\s*(.+)$", line)
+            match = re.match(
+                rf"^([A-Za-z][A-Za-z0-9 _/().-]{{1,{self.MAX_FIELD_NAME_LENGTH}}})\s*[:=]\s*(.+)$",
+                line,
+            )
             if not match:
                 free_lines.append(line)
                 continue
@@ -161,7 +167,7 @@ class LibImporter:
             parsed[key] = value
             parsed_lines += 1
 
-        if parsed_lines < 2:
+        if parsed_lines < self.MIN_STRUCTURED_FIELDS:
             return description, {}
 
         explicit_description = parsed.pop("Description", "").strip()
