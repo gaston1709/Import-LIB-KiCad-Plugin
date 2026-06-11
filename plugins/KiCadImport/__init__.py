@@ -85,6 +85,8 @@ class REMOTE_TYPES(Enum):
 class LibImporter:
     MAX_FIELD_NAME_LENGTH = 40
     MIN_STRUCTURED_FIELDS = 2
+    DEFAULT_PROP_FONT_FACE = "default"
+    DEFAULT_PROP_FONT_SIZE = 1.27
 
     def print(self, txt: str) -> None:
         print("->" + txt)
@@ -145,15 +147,15 @@ class LibImporter:
         parsed: dict[str, str] = {}
         free_lines: list[str] = []
         parsed_lines = 0
+        field_pattern = (
+            rf"^([A-Za-z][A-Za-z0-9 _/().-]{{1,{self.MAX_FIELD_NAME_LENGTH}}})\s*[:=]\s*(.+)$"
+        )
 
         for raw_line in text.splitlines():
             line = raw_line.strip().lstrip("-* ").strip()
             if not line:
                 continue
-            match = re.match(
-                rf"^([A-Za-z][A-Za-z0-9 _/().-]{{1,{self.MAX_FIELD_NAME_LENGTH}}})\s*[:=]\s*(.+)$",
-                line,
-            )
+            match = re.match(field_pattern, line)
             if not match:
                 free_lines.append(line)
                 continue
@@ -171,7 +173,14 @@ class LibImporter:
             return description, {}
 
         explicit_description = parsed.pop("Description", "").strip()
-        normalized_description = explicit_description or "\n".join(free_lines).strip() or description
+        if explicit_description:
+            normalized_description = explicit_description
+        else:
+            free_text_description = "\n".join(free_lines).strip()
+            if free_text_description:
+                normalized_description = free_text_description
+            else:
+                normalized_description = description
         return normalized_description, parsed
 
     def _normalize_symbol_properties(self, symbol_lib: SymbolLib) -> SymbolLib:
@@ -188,7 +197,8 @@ class LibImporter:
 
             description_prop.value = normalized_description
             existing_keys = {prop.key.lower() for prop in symbol.properties}
-            next_id = max((prop.id for prop in symbol.properties), default=-1) + 1
+            max_existing_id = max((prop.id for prop in symbol.properties), default=-1)
+            next_id = max(0, max_existing_id) + 1
 
             for key, value in parsed_fields.items():
                 if key.lower() in existing_keys:
@@ -201,9 +211,9 @@ class LibImporter:
                         position=Position(0, 0),
                         effects=Effects(
                             font=Font(
-                                face="default",
-                                height=1.27,
-                                width=1.27,
+                                face=self.DEFAULT_PROP_FONT_FACE,
+                                height=self.DEFAULT_PROP_FONT_SIZE,
+                                width=self.DEFAULT_PROP_FONT_SIZE,
                                 bold=False,
                                 italic=False,
                             )
