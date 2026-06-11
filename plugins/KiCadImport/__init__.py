@@ -153,7 +153,7 @@ class LibImporter:
         # Supports lines like "Manufacturer: Yageo" / "Part Number = RC0402..."
         # while allowing common symbols in field names.
         field_pattern = (
-            rf"^([A-Za-z][A-Za-z0-9 _/().-]{{1,{self.MAX_FIELD_NAME_LENGTH}}})\s*[:=]\s*(.+)$"
+            rf"^([A-Za-z][A-Za-z0-9 _/().\-]{{1,{self.MAX_FIELD_NAME_LENGTH}}})\s*[:=]\s*(.+)$"
         )
 
         for raw_line in text.splitlines():
@@ -203,7 +203,9 @@ class LibImporter:
 
             description_prop.value = normalized_description
             existing_keys = {prop.key.lower() for prop in symbol.properties}
-            next_id = max((max(prop.id, 0) for prop in symbol.properties), default=0) + 1
+            next_id = (
+                max((prop.id for prop in symbol.properties if prop.id >= 0), default=-1) + 1
+            )
 
             for key, value in parsed_fields.items():
                 if key.lower() in existing_keys:
