@@ -192,31 +192,47 @@ class LibImporter:
     def _normalize_symbol_properties(self, symbol_lib: SymbolLib) -> SymbolLib:
         for symbol in symbol_lib.symbols:
             description_prop = next((p for p in symbol.properties if p.key == "Description"), None)
-            if not description_prop or not description_prop.value:
-                continue
+            if description_prop and description_prop.value:
+                normalized_description, parsed_fields = self._split_description_fields(
+                    description_prop.value
+                )
+                if parsed_fields:
+                    description_prop.value = normalized_description
+                    existing_keys = {prop.key.lower() for prop in symbol.properties}
+                    next_id = (
+                        max((prop.id for prop in symbol.properties if prop.id >= 0), default=-1) + 1
+                    )
 
-            normalized_description, parsed_fields = self._split_description_fields(
-                description_prop.value
-            )
-            if not parsed_fields:
-                continue
+                    for key, value in parsed_fields.items():
+                        if key.lower() in existing_keys:
+                            continue
+                        symbol.properties.append(
+                            Property(
+                                key=key,
+                                value=value,
+                                id=next_id,
+                                position=Position(0, 0),
+                                effects=Effects(
+                                    font=Font(
+                                        face=self.DEFAULT_PROP_FONT_FACE,
+                                        height=self.DEFAULT_PROP_FONT_SIZE,
+                                        width=self.DEFAULT_PROP_FONT_SIZE,
+                                        bold=False,
+                                        italic=False,
+                                    ),
+                                    hide=True,
+                                ),
+                            )
+                        )
+                        existing_keys.add(key.lower())
+                        next_id += 1
 
-            description_prop.value = normalized_description
-            existing_keys = {prop.key.lower() for prop in symbol.properties}
-            next_id = (
-                max((prop.id for prop in symbol.properties if prop.id >= 0), default=-1) + 1
-            )
-
-            for key, value in parsed_fields.items():
-                if key.lower() in existing_keys:
-                    continue
-                symbol.properties.append(
-                    Property(
-                        key=key,
-                        value=value,
-                        id=next_id,
-                        position=Position(0, 0),
-                        effects=Effects(
+            # Ensure all properties except Reference and Value are hidden, and hide names for all
+            for prop in symbol.properties:
+                prop.showName = False
+                if prop.key not in ("Reference", "Value"):
+                    if prop.effects is None:
+                        prop.effects = Effects(
                             font=Font(
                                 face=self.DEFAULT_PROP_FONT_FACE,
                                 height=self.DEFAULT_PROP_FONT_SIZE,
@@ -224,11 +240,8 @@ class LibImporter:
                                 bold=False,
                                 italic=False,
                             )
-                        ),
-                    )
-                )
-                existing_keys.add(key.lower())
-                next_id += 1
+                        )
+                    prop.effects.hide = True
 
         return symbol_lib
 
@@ -586,6 +599,22 @@ class LibImporter:
                     ),
                 )
                 symbol.properties.append(new_prop)
+
+            # Ensure all properties except Reference and Value are hidden, and hide names for all
+            for prop in symbol.properties:
+                prop.showName = False
+                if prop.key not in ("Reference", "Value"):
+                    if prop.effects is None:
+                        prop.effects = Effects(
+                            font=Font(
+                                face="default",
+                                height=1.27,
+                                width=1.27,
+                                bold=False,
+                                italic=False,
+                            )
+                        )
+                    prop.effects.hide = True
 
         return symbol_lib
 
