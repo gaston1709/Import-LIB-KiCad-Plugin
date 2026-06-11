@@ -6,6 +6,7 @@ from __future__ import annotations
 # Supports KiCad 7.0 and newer.
 import gzip
 import logging
+import re
 import shutil
 import sys
 import tempfile
@@ -82,6 +83,14 @@ class REMOTE_TYPES(Enum):
 
 
 class LibImporter:
+    # Keep field names reasonably short to avoid matching full sentences as keys.
+    MAX_FIELD_NAME_LENGTH = 40
+    # Require at least two key/value rows before treating Description as a structured blob.
+    MIN_STRUCTURED_FIELDS = 2
+    # Match the existing KiCad property defaults used elsewhere in this importer.
+    DEFAULT_PROP_FONT_FACE = "default"
+    DEFAULT_PROP_FONT_SIZE = 1.27
+
     def print(self, txt: str) -> None:
         print("->" + txt)
 
@@ -114,6 +123,127 @@ class LibImporter:
         if original_name != name:
             logger.debug(f"Cleaned name: {original_name} -> {name}")
         return name
+
+    @staticmethod
+    def _canonical_field_name(raw_key: str) -> str:
+        key = " ".join(raw_key.strip().replace("_", " ").split())
+        key_l = key.lower()
+        aliases = {
+            "manufacturer part number": "MPN",
+            "mfr part number": "MPN",
+            "part number": "MPN",
+            "mpn": "MPN",
+            "manufacturer": "Manufacturer",
+            "supplier": "Supplier",
+            "supplier part number": "Supplier Part Number",
+            "package": "Package",
+            "features": "Features",
+            "configuration": "Configuration",
+            "datasheet": "Datasheet",
+            "description": "Description",
+            "keywords": "Keywords",
+        }
+        return aliases.get(key_l, key)
+
+    def _split_description_fields(self, description: str) -> tuple[str, dict[str, str]]:
+        text = description.replace("\\n", "\n")
+        parsed: dict[str, str] = {}
+        free_lines: list[str] = []
+        parsed_lines = 0
+        # Supports lines like "Manufacturer: Yageo" / "Part Number = RC0402..."
+        # while allowing common symbols in field names.
+        field_pattern = (
+            rf"^([A-Za-z][A-Za-z0-9 _/().\-]{{1,{self.MAX_FIELD_NAME_LENGTH}}})\s*[:=]\s*(.+)$"
+        )
+
+        for raw_line in text.splitlines():
+            # Normalize markdown-like list rows such as "- Manufacturer: ..."
+            line = raw_line.strip().lstrip("-* ").strip()
+            if not line:
+                continue
+            match = re.match(field_pattern, line)
+            if not match:
+                free_lines.append(line)
+                continue
+
+            key = self._canonical_field_name(match.group(1))
+            value = match.group(2).strip()
+            if not value:
+                free_lines.append(line)
+                continue
+
+            parsed[key] = value
+            parsed_lines += 1
+
+        if parsed_lines < self.MIN_STRUCTURED_FIELDS:
+            return description, {}
+
+        explicit_description = parsed.pop("Description", "").strip()
+        if explicit_description:
+            normalized_description = explicit_description
+        else:
+            free_text_description = "\n".join(free_lines).strip()
+            if free_text_description:
+                normalized_description = free_text_description
+            else:
+                normalized_description = description
+        return normalized_description, parsed
+
+    def _normalize_symbol_properties(self, symbol_lib: SymbolLib) -> SymbolLib:
+        for symbol in symbol_lib.symbols:
+            description_prop = next((p for p in symbol.properties if p.key == "Description"), None)
+            if description_prop and description_prop.value:
+                normalized_description, parsed_fields = self._split_description_fields(
+                    description_prop.value
+                )
+                if parsed_fields:
+                    description_prop.value = normalized_description
+                    existing_keys = {prop.key.lower() for prop in symbol.properties}
+                    next_id = (
+                        max((prop.id for prop in symbol.properties if prop.id >= 0), default=-1) + 1
+                    )
+
+                    for key, value in parsed_fields.items():
+                        if key.lower() in existing_keys:
+                            continue
+                        symbol.properties.append(
+                            Property(
+                                key=key,
+                                value=value,
+                                id=next_id,
+                                position=Position(0, 0),
+                                effects=Effects(
+                                    font=Font(
+                                        face=self.DEFAULT_PROP_FONT_FACE,
+                                        height=self.DEFAULT_PROP_FONT_SIZE,
+                                        width=self.DEFAULT_PROP_FONT_SIZE,
+                                        bold=False,
+                                        italic=False,
+                                    ),
+                                    hide=True,
+                                ),
+                            )
+                        )
+                        existing_keys.add(key.lower())
+                        next_id += 1
+
+            # Ensure all properties except Reference and Value are hidden, and hide names for all
+            for prop in symbol.properties:
+                prop.showName = False
+                if prop.key not in ("Reference", "Value"):
+                    if prop.effects is None:
+                        prop.effects = Effects(
+                            font=Font(
+                                face=self.DEFAULT_PROP_FONT_FACE,
+                                height=self.DEFAULT_PROP_FONT_SIZE,
+                                width=self.DEFAULT_PROP_FONT_SIZE,
+                                bold=False,
+                                italic=False,
+                            )
+                        )
+                    prop.effects.hide = True
+
+        return symbol_lib
 
     def identify_remote_type(
         self, zf: zipfile.ZipFile
@@ -297,6 +427,7 @@ class LibImporter:
                 logger.error("No symbols found in library")
                 raise ValueError("No symbols found in library")
 
+            symbol_lib = self._normalize_symbol_properties(symbol_lib)
             symbol_name = symbol_lib.symbols[0].entryName
             return symbol_lib, symbol_name
         except Exception as e:
@@ -468,6 +599,22 @@ class LibImporter:
                     ),
                 )
                 symbol.properties.append(new_prop)
+
+            # Ensure all properties except Reference and Value are hidden, and hide names for all
+            for prop in symbol.properties:
+                prop.showName = False
+                if prop.key not in ("Reference", "Value"):
+                    if prop.effects is None:
+                        prop.effects = Effects(
+                            font=Font(
+                                face="default",
+                                height=1.27,
+                                width=1.27,
+                                bold=False,
+                                italic=False,
+                            )
+                        )
+                    prop.effects.hide = True
 
         return symbol_lib
 
