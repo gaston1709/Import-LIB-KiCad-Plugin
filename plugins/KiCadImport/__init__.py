@@ -83,8 +83,11 @@ class REMOTE_TYPES(Enum):
 
 
 class LibImporter:
+    # Keep field names reasonably short to avoid matching full sentences as keys.
     MAX_FIELD_NAME_LENGTH = 40
+    # Require at least two key/value rows before treating Description as a structured blob.
     MIN_STRUCTURED_FIELDS = 2
+    # Match the existing KiCad property defaults used elsewhere in this importer.
     DEFAULT_PROP_FONT_FACE = "default"
     DEFAULT_PROP_FONT_SIZE = 1.27
 
@@ -147,11 +150,14 @@ class LibImporter:
         parsed: dict[str, str] = {}
         free_lines: list[str] = []
         parsed_lines = 0
+        # Supports lines like "Manufacturer: Yageo" / "Part Number = RC0402..."
+        # while allowing common symbols in field names.
         field_pattern = (
             rf"^([A-Za-z][A-Za-z0-9 _/().-]{{1,{self.MAX_FIELD_NAME_LENGTH}}})\s*[:=]\s*(.+)$"
         )
 
         for raw_line in text.splitlines():
+            # Normalize markdown-like list rows such as "- Manufacturer: ..."
             line = raw_line.strip().lstrip("-* ").strip()
             if not line:
                 continue
@@ -197,8 +203,7 @@ class LibImporter:
 
             description_prop.value = normalized_description
             existing_keys = {prop.key.lower() for prop in symbol.properties}
-            max_existing_id = max((prop.id for prop in symbol.properties), default=-1)
-            next_id = max(0, max_existing_id) + 1
+            next_id = max((max(prop.id, 0) for prop in symbol.properties), default=0) + 1
 
             for key, value in parsed_fields.items():
                 if key.lower() in existing_keys:
